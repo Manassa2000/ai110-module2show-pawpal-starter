@@ -7,6 +7,16 @@
 - Briefly describe your initial UML design.
 - What classes did you include, and what responsibilities did you assign to each?
 
+The UML design consists of 6 classes and 3 enums.
+
+Owner — holds the pet owner's profile and daily time budget (available_minutes, preferred_start_time, preferred_end_time). Responsible for managing the list of pets.
+Pet — stores an individual animal's details (species, breed, age, weight, health notes) and owns a list of Task objects. Responsible for task management per pet.
+Task — represents a single care activity (walk, feed, meds, etc.). Holds scheduling-relevant data: duration_minutes, priority, frequency, and an optional preferred_time for time-sensitive tasks like medications.
+ScheduledTask — a decorator around Task that adds a concrete start_time and end_time. Keeps the original Task data clean while representing placement in the day.
+DailyPlan — the output of the scheduler. Holds two lists: tasks that were successfully scheduled and tasks that couldn't fit. Also stores a reasoning log explaining decisions.
+Scheduler — the only class with real algorithmic logic. Takes an Owner and produces a DailyPlan by prioritizing tasks, fitting them within available time, assigning time slots, and building a human-readable explanation.
+The three enums (TaskType, Priority, Frequency) keep allowed values explicit and prevent invalid inputs like typos in strings.
+
 **b. Design changes**
 
 - Did your design change during implementation?
