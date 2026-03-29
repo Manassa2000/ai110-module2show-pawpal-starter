@@ -69,9 +69,44 @@ class Task:
     preferred_time: Optional[time] = None
     notes: str = ""
     completed: bool = False
+    due_date: Optional[date] = None
 
-    def mark_complete(self) -> None:
+    # Maps each recurring Frequency to how many days until the next occurrence.
+    _RECURRENCE_DAYS: dict = field(default_factory=lambda: {
+        Frequency.DAILY:       1,
+        Frequency.TWICE_DAILY: 1,   # same-day recurrence treated as next day
+        Frequency.WEEKLY:      7,
+    })
+
+    def mark_complete(self) -> Optional["Task"]:
+        """
+        Mark this task done and return a new Task for the next occurrence,
+        or None if the task is non-recurring (AS_NEEDED).
+
+        Uses timedelta to calculate the next due_date:
+            DAILY / TWICE_DAILY  →  due_date + 1 day
+            WEEKLY               →  due_date + 7 days
+        """
         self.completed = True
+        days = self._RECURRENCE_DAYS.get(self.frequency)
+        if days is None:
+            return None     # AS_NEEDED — no automatic next occurrence
+
+        base = self.due_date if self.due_date else date.today()
+        next_due = base + timedelta(days=days)
+
+        return Task(
+            name=self.name,
+            task_type=self.task_type,
+            duration_minutes=self.duration_minutes,
+            priority=self.priority,
+            frequency=self.frequency,
+            pet=self.pet,
+            preferred_time=self.preferred_time,
+            notes=self.notes,
+            completed=False,
+            due_date=next_due,
+        )
 
     def get_priority_score(self) -> int:
         """Return numeric score for sorting. Time-sensitive tasks get a bonus."""
@@ -208,6 +243,7 @@ class Scheduler:
 
     def _prioritize_tasks(self, tasks: list[Task]) -> list[Task]:
         """Sort tasks: time-sensitive HIGH first, then by priority score descending."""
+        # Higher score = scheduled first; time-sensitive tasks get a +1 bonus over same-priority peers.
         return sorted(tasks, key=lambda t: t.get_priority_score(), reverse=True)
 
     def _fit_tasks(
@@ -218,6 +254,7 @@ class Scheduler:
         remaining = available_minutes
 
         for task in tasks:
+            # Greedy: include the task if it fits, otherwise skip it and keep going.
             if task.duration_minutes <= remaining:
                 scheduled.append(task)
                 remaining -= task.duration_minutes
@@ -251,6 +288,7 @@ class Scheduler:
             for slot in sorted(slots, key=lambda s: s.start_time):
                 slot_start = datetime.combine(date.today(), slot.start_time)
                 slot_end = datetime.combine(date.today(), slot.end_time)
+                # Push cursor forward if this free task would land inside a pinned slot.
                 if cursor_dt < slot_end and cursor_dt + timedelta(minutes=task.duration_minutes) > slot_start:
                     cursor_dt = slot_end
 
@@ -260,6 +298,95 @@ class Scheduler:
 
         # Return all slots sorted by start time
         return sorted(slots, key=lambda s: s.start_time)
+
+    def detect_conflicts(self, scheduled_tasks: list[ScheduledTask]) -> list[str]:
+        """
+        Check every pair of ScheduledTasks for time overlaps.
+        Returns a list of warning strings — one per conflict found.
+        Never raises; an empty list means no conflicts.
+        """
+        warnings = []
+        # O(n²) pair check — acceptable because daily task counts are small.
+        for i in range(len(scheduled_tasks)):
+            for j in range(i + 1, len(scheduled_tasks)):
+                a, b = scheduled_tasks[i], scheduled_tasks[j]
+                if a.overlaps_with(b):
+                    pet_a = a.task.pet.name if a.task.pet else "?"
+                    pet_b = b.task.pet.name if b.task.pet else "?"
+                    warnings.append(
+                        f"CONFLICT: [{pet_a}] '{a.task.name}' "
+                        f"({a.start_time.strftime('%I:%M %p')}–{a.end_time.strftime('%I:%M %p')}) "
+                        f"overlaps with [{pet_b}] '{b.task.name}' "
+                        f"({b.start_time.strftime('%I:%M %p')}–{b.end_time.strftime('%I:%M %p')})"
+                    )
+        return warnings
+
+    def mark_task_complete(self, task: Task) -> Optional[Task]:
+        """
+        Mark a task complete and, if it recurs, automatically register
+        the next occurrence on the same pet.
+
+        Returns the new Task (next occurrence) or None for AS_NEEDED tasks.
+        """
+        next_task = task.mark_complete()
+        # Auto-register the next occurrence so the pet's task list stays current.
+        if next_task is not None and task.pet is not None:
+            task.pet.add_task(next_task)
+        return next_task
+
+    def filter_tasks(
+        self,
+        tasks: list[Task],
+        completed: bool | None = None,
+        pet_name: str | None = None,
+    ) -> list[Task]:
+        """
+        Filter tasks by completion status, pet name, or both.
+
+        Args:
+            tasks:     The list of Task objects to filter.
+            completed: If True, return only completed tasks.
+                       If False, return only incomplete tasks.
+                       If None, completion status is ignored.
+            pet_name:  If provided, return only tasks belonging to that pet
+                       (case-insensitive). If None, all pets are included.
+
+        Examples:
+            # Incomplete tasks only
+            scheduler.filter_tasks(all_tasks, completed=False)
+
+            # All of Buddy's tasks regardless of status
+            scheduler.filter_tasks(all_tasks, pet_name="Buddy")
+
+            # Only Buddy's completed tasks
+            scheduler.filter_tasks(all_tasks, completed=True, pet_name="Buddy")
+        """
+        result = tasks
+
+        # Each active filter narrows the list; skipped when argument is None.
+        if completed is not None:
+            result = [t for t in result if t.completed == completed]
+
+        if pet_name is not None:
+            result = [t for t in result if t.pet and t.pet.name.lower() == pet_name.lower()]
+
+        return result
+
+    def sort_by_time(self, tasks: list[Task]) -> list[Task]:
+        """
+        Sort tasks by preferred_time ascending.
+        Tasks without a preferred_time are placed at the end.
+
+        The lambda returns the time object directly — Python can compare
+        time objects with < and > just like numbers, so sorted() handles it.
+        Tasks with no preferred_time get time(23, 59) as a sentinel so they
+        sink to the bottom rather than raising a TypeError.
+        """
+        # Tasks without a preferred_time get a late sentinel so they sort to the end.
+        return sorted(
+            tasks,
+            key=lambda t: t.preferred_time if t.preferred_time is not None else time(23, 59)
+        )
 
     def _build_reasoning(
         self, scheduled: list[Task], unscheduled: list[Task]

@@ -36,6 +36,8 @@ The three enums (TaskType, Priority, Frequency) keep allowed values explicit and
 - Describe one tradeoff your scheduler makes.
 - Why is that tradeoff reasonable for this scenario?
 
+Greedy scheduling by priority, ignoring total time optimality
+
 ---
 
 ## 3. AI Collaboration

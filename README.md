@@ -41,3 +41,9 @@ pip install -r requirements.txt
 5. Add tests to verify key behaviors.
 6. Connect your logic to the Streamlit UI in `app.py`.
 7. Refine UML so it matches what you actually built.
+
+
+### Smart Scheduling
+
+PawPal+ uses a priority scheduler to build a daily care plan within the owner's available time budget. Tasks are ranked by priority level (HIGH, MEDIUM, LOW) with a bonus for time-sensitive tasks that have a pinned preferred time, such as medications. Pinned tasks are placed at their exact times first; remaining tasks fill the gaps sequentially. The scheduler also detects time conflicts between any two overlapping slots and returns plain-language warnings without crashing. Recurring tasks (daily or weekly) automatically generate their next occurrence when marked complete, using `timedelta` to calculate the due date. Tasks can be filtered by completion status or pet name, and sorted chronologically, making it easy to query exactly what still needs to happen and when. 
+
